@@ -1,0 +1,16 @@
+{
+  "name": "video-call-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Group video-call platform (mediasoup SFU + Next.js)",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace apps/server run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "build": "npm --workspace apps/server run build && npm --workspace apps/web run build",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  }
+}

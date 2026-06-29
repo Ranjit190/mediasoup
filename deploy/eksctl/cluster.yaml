@@ -1,0 +1,61 @@
+# eksctl cluster for the video-call platform.
+#   eksctl create cluster -f deploy/eksctl/cluster.yaml
+#
+# Provides publicly-addressable node groups (the server needs a reachable node IP
+# for WebRTC media), plus a general pool. Apply the app with:
+#   kubectl apply -f deploy/k8s/video-call.yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: video-call
+  region: ap-south-1
+  version: "1.30"
+
+iam:
+  withOIDC: true
+
+managedNodeGroups:
+  # General workloads: signaling (HPA), system add-ons, AWS LB Controller.
+  - name: general
+    instanceType: t3.large
+    minSize: 2
+    maxSize: 6
+    desiredCapacity: 2
+    volumeSize: 30
+    labels: { workload: general }
+
+  # SFU media nodes. Public subnets + public IPs so mediasoup can announce them.
+  # Tainted so only SFU pods land here; one SFU pod per node via the DaemonSet.
+  - name: sfu
+    instanceType: c5.2xlarge
+    minSize: 1
+    maxSize: 10
+    desiredCapacity: 2
+    privateNetworking: false
+    volumeSize: 30
+    labels: { workload: sfu }
+    taints:
+      - key: dedicated
+        value: sfu
+        effect: NoSchedule
+
+  # coturn (STUN/TURN) nodes. Public IPs; relay-heavy, network-bound.
+  - name: turn
+    instanceType: c5.large
+    minSize: 1
+    maxSize: 4
+    desiredCapacity: 1
+    privateNetworking: false
+    volumeSize: 20
+    labels: { workload: turn }
+    taints:
+      - key: dedicated
+        value: turn
+        effect: NoSchedule
+
+# After create:
+#  1. Install the AWS Load Balancer Controller (provides the `alb` IngressClass).
+#  2. Open the SFU node Security Group: UDP+TCP 40000-40249 from 0.0.0.0/0.
+#  3. Open the TURN node Security Group: UDP/TCP 3478, TCP 5349, UDP 49160-49200.
+#  4. kubectl apply -f deploy/k8s/video-call.yaml

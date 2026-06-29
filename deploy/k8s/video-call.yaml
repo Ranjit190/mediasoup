@@ -1,0 +1,246 @@
+# Plain Kubernetes manifests for the video-call platform.
+# Self-contained: Redis + Kafka + MongoDB + the combined signaling/SFU server + the web app.
+#   kubectl apply -f deploy/k8s/video-call.yaml
+#
+# The server runs on hostNetwork so WebRTC media (UDP) reaches it directly at the
+# node's IP, and announces that node IP to mediasoup via the downward API.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: video-call
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: video-call
+data:
+  PORT: "4000"
+  CORS_ORIGIN: "*"
+  # Backend URL the browser uses to reach the SFU. The web app reads this at
+  # runtime (via /api/config) — replace with your node IP / domain.
+  SERVER_URL: "http://REPLACE_WITH_NODE_IP:4000"
+  ENABLE_REDIS: "true"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_TLS: "false"
+  ENABLE_KAFKA: "true"
+  KAFKA_BROKERS: "kafka:9092"
+  ENABLE_MONGO: "true"
+  MONGO_URI: "mongodb://mongo:27017"
+  MONGO_DB: "videocall"
+  MEDIASOUP_LISTEN_IP: "0.0.0.0"
+  MEDIASOUP_RTC_MIN_PORT: "40000"
+  MEDIASOUP_RTC_MAX_PORT: "40100"
+  MEDIASOUP_NUM_WORKERS: "0"
+  MAX_PEERS_PER_ROUTER: "30"
+---
+# ---------------- Redis ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: video-call
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: video-call
+spec:
+  selector: { app: redis }
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# ---------------- Kafka (single-node KRaft) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: video-call
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.8.0
+          ports:
+            - containerPort: 9092
+          env:
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093" }
+            # Advertised over the in-cluster Service DNS name so the server can reach it.
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "PLAINTEXT" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: video-call
+spec:
+  selector: { app: kafka }
+  ports:
+    - port: 9092
+      targetPort: 9092
+---
+# ---------------- MongoDB ----------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-data
+  namespace: video-call
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: video-call
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mongo }
+  template:
+    metadata:
+      labels: { app: mongo }
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongo-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: video-call
+spec:
+  selector: { app: mongo }
+  ports:
+    - port: 27017
+      targetPort: 27017
+---
+# ---------------- Signaling + SFU server (combined) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: video-call
+spec:
+  # hostNetwork pods can't share a node's ports, so keep one per node. To scale,
+  # raise replicas AND add node anti-affinity (or switch to a DaemonSet).
+  replicas: 1
+  selector:
+    matchLabels: { app: server }
+  template:
+    metadata:
+      labels: { app: server }
+    spec:
+      # Required for WebRTC media (UDP) — the SFU binds the node's ports directly.
+      hostNetwork: true
+      # So the pod still resolves in-cluster Services (redis/kafka/mongo) while on host net.
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: server
+          image: 993748048099/mediasoup:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            # Announce the node's IP to mediasoup so clients can reach the media ports.
+            - name: MEDIASOUP_ANNOUNCED_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+# ---------------- Web frontend ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: video-call
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      containers:
+        - name: web
+          # Portable image — the backend URL is injected at runtime via SERVER_URL
+          # (no build args). Built with: docker build -t 993748048099/mediasoup-frontend:0.1.0 apps/web
+          image: 993748048099/mediasoup-frontend:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SERVER_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: video-call
+spec:
+  type: NodePort
+  selector: { app: web }
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30300

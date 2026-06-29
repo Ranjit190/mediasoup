@@ -1,0 +1,140 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #0f1115;
+  color: #e8eaed;
+}
+
+.home {
+  max-width: 420px;
+  margin: 12vh auto;
+  padding: 32px;
+  background: #1b1e25;
+  border-radius: 12px;
+}
+
+.home h1 {
+  margin-top: 0;
+  font-size: 22px;
+}
+
+.home input {
+  width: 100%;
+  padding: 12px;
+  margin: 8px 0;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #0f1115;
+  color: #e8eaed;
+  font-size: 15px;
+}
+
+.home button,
+.btn {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  background: #3367d6;
+  color: #fff;
+}
+
+.home button {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.room {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.room-header {
+  padding: 12px 20px;
+  background: #1b1e25;
+  font-weight: 600;
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-content: start;
+  overflow-y: auto;
+}
+
+.tile {
+  position: relative;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.tile.speaking {
+  border-color: #34a853;
+  box-shadow: 0 0 0 2px rgba(52, 168, 83, 0.5);
+}
+
+.tile.pinned {
+  border-color: #fbbc04;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2d34;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #cbd0d8;
+}
+
+.tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile-label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding: 14px;
+  background: #1b1e25;
+}
+
+.btn.off {
+  background: #5f6368;
+}
+
+.btn.active {
+  background: #188038;
+}
+
+.btn.leave {
+  background: #d93025;
+}

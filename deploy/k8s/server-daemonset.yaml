@@ -1,0 +1,74 @@
+# Multi-node SFU: one server pod per node (DaemonSet), each announcing ITS OWN
+# node public IP to mediasoup (discovered from EC2 IMDS at startup).
+#
+# Use this INSTEAD of the `server` Deployment in video-call.yaml:
+#   kubectl apply -f deploy/k8s/video-call.yaml         # base (config, redis, kafka, mongo, web)
+#   kubectl -n video-call delete deployment server      # remove the single-node Deployment
+#   kubectl apply -f deploy/k8s/server-daemonset.yaml    # add one SFU per node
+#
+# NOTE: this makes each node a correctly-addressable SFU, but the app keeps each
+# room in one process. Distributing clients across nodes still needs a room->node
+# routing/discovery layer (see deploy/k8s/README.md "Multi-node").
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: server
+  namespace: video-call
+spec:
+  selector:
+    matchLabels: { app: server }
+  template:
+    metadata:
+      labels: { app: server }
+    spec:
+      # Required for WebRTC media (UDP) — the SFU binds the node's ports directly.
+      hostNetwork: true
+      # Keep in-cluster DNS so it still resolves redis/kafka/mongo Services.
+      dnsPolicy: ClusterFirstWithHostNet
+      # To pin SFUs to a dedicated node group (e.g. the eksctl `sfu` group), add:
+      #   nodeSelector: { workload: sfu }
+      #   tolerations: [{ key: dedicated, operator: Equal, value: sfu, effect: NoSchedule }]
+      volumes:
+        - name: aws-meta
+          emptyDir: {}
+      initContainers:
+        # Reads the node's public IPv4 from EC2 IMDSv2 into a shared file.
+        # hostNetwork makes 169.254.169.254 reachable with the default hop limit.
+        - name: discover-public-ip
+          image: curlimages/curl:8.7.1
+          command:
+            - sh
+            - -c
+            - >
+              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token"
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300");
+              curl -s -H "X-aws-ec2-metadata-token: $TOKEN"
+              http://169.254.169.254/latest/meta-data/public-ipv4 > /aws/public-ip;
+              echo "announced ip: $(cat /aws/public-ip)"
+          volumeMounts:
+            - name: aws-meta
+              mountPath: /aws
+      containers:
+        - name: server
+          image: 993748048099/mediasoup:0.1.0
+          imagePullPolicy: IfNotPresent
+          # Inject the discovered node public IP as MEDIASOUP_ANNOUNCED_IP at startup.
+          command:
+            - sh
+            - -c
+            - 'export MEDIASOUP_ANNOUNCED_IP=$(cat /aws/public-ip); exec node dist/server.js'
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: app-config
+          volumeMounts:
+            - name: aws-meta
+              mountPath: /aws
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
