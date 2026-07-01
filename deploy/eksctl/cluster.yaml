@@ -9,7 +9,7 @@ kind: ClusterConfig
 
 metadata:
   name: video-call
-  region: ap-south-1
+  region: us-east-1
   version: "1.30"
 
 iam:
