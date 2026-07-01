@@ -27,7 +27,7 @@ data:
   REDIS_TLS: "false"
   ENABLE_KAFKA: "true"
   KAFKA_BROKERS: "kafka:9092"
-  ENABLE_MONGO: "true"
+  ENABLE_MONGO: "false"
   MONGO_URI: "mongodb://mongo:27017"
   MONGO_DB: "videocall"
   MEDIASOUP_LISTEN_IP: "0.0.0.0"
