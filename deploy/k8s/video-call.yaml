@@ -1,5 +1,5 @@
 # Plain Kubernetes manifests for the video-call platform.
-# Self-contained: Redis + Kafka + MongoDB + the combined signaling/SFU server + the web app.
+# Self-contained: Redis + MongoDB + the combined signaling/SFU server + the web app.
 #   kubectl apply -f deploy/k8s/video-call.yaml
 #
 # The server runs on hostNetwork so WebRTC media (UDP) reaches it directly at the
@@ -25,8 +25,7 @@ data:
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   REDIS_TLS: "false"
-  ENABLE_KAFKA: "true"
-  KAFKA_BROKERS: "kafka:9092"
+  ENABLE_KAFKA: "false"
   ENABLE_MONGO: "false"
   MONGO_URI: "mongodb://mongo:27017"
   MONGO_DB: "videocall"
@@ -66,51 +65,6 @@ spec:
   ports:
     - port: 6379
       targetPort: 6379
----
-# ---------------- Kafka (single-node KRaft) ----------------
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kafka
-  namespace: video-call
-spec:
-  replicas: 1
-  selector:
-    matchLabels: { app: kafka }
-  template:
-    metadata:
-      labels: { app: kafka }
-    spec:
-      containers:
-        - name: kafka
-          image: apache/kafka:3.8.0
-          ports:
-            - containerPort: 9092
-          env:
-            - { name: KAFKA_NODE_ID, value: "1" }
-            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
-            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
-            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093" }
-            # Advertised over the in-cluster Service DNS name so the server can reach it.
-            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
-            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT" }
-            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
-            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "PLAINTEXT" }
-            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
-            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
-            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
-            - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kafka
-  namespace: video-call
-spec:
-  selector: { app: kafka }
-  ports:
-    - port: 9092
-      targetPort: 9092
 ---
 # ---------------- MongoDB ----------------
 apiVersion: v1
@@ -182,7 +136,7 @@ spec:
     spec:
       # Required for WebRTC media (UDP) — the SFU binds the node's ports directly.
       hostNetwork: true
-      # So the pod still resolves in-cluster Services (redis/kafka/mongo) while on host net.
+      # So the pod still resolves in-cluster Services (redis/mongo) while on host net.
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: server
@@ -241,9 +195,9 @@ metadata:
   name: web
   namespace: video-call
 spec:
-  type: NodePort
+  # ClusterIP — Caddy fronts the web app on 443, so no NodePort needed.
+  type: ClusterIP
   selector: { app: web }
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30300
